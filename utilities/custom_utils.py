@@ -2,6 +2,8 @@ from typing import List, Optional
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+from pyspark.sql.functions import current_timestamp
+from delta.tables import DeltaTable
 
 class Transformations:
     """
@@ -27,3 +29,13 @@ class Transformations:
             order_cols.append(F.col(tie_breaker).desc())
         w = Window.partitionBy(*[F.col(c) for c in dedup_cols]).orderBy(*order_cols)
         return df.withColumn("_rn", F.row_number().over(w)).filter(F.col("_rn") == 1).drop("_rn")
+    
+    def process_timestamp(self,df):
+        """
+        Add a	processed_timestamp column to the dataframe
+        """
+        df = df.withColumn("processed_timestamp", current_timestamp())
+        return df
+    
+    def upsert(self, df, keycols,table):
+        dlt_obj = DeltaTable.forName(f"table")
