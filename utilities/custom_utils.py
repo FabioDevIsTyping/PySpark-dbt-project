@@ -1,10 +1,9 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from pyspark.sql.functions import current_timestamp
 from delta.tables import DeltaTable
-
 
 class Transformations:
     """
@@ -65,3 +64,57 @@ class Transformations:
                .whenNotMatchedInsertAll()
                .execute()
         )
+
+    def duplicates_report(self, df: DataFrame, keys: List[str]) -> DataFrame:
+        """
+        Return a DataFrame with the number of duplicates per group defined by keys.
+        """
+        return df.groupBy(*[F.col(k) for k in keys]).count().filter(F.col("count") > 1)
+    
+    def deduplicate_by_recency(self, df: DataFrame, keys: List[str], cdc: str, tie_breaker: Optional[str] = None) -> DataFrame:
+        """
+        Keep the latest row per key ordered by cdc desc and optional tie_breaker desc.
+        """
+        order_cols = [F.col(cdc).desc()]
+        if tie_breaker:
+            order_cols.append(F.col(tie_breaker).desc())
+        w = Window.partitionBy(*[F.col(k) for k in keys]).orderBy(*order_cols)
+        return df.withColumn("_rn", F.row_number().over(w)).filter(F.col("_rn") == 1).drop("_rn")
+    
+    def nulls_report(self, df: DataFrame, cols: List[str]) -> DataFrame:
+        """
+        Return counts and ratios of nulls per requested columns.
+        """
+        total = df.count()
+        aggs = []
+        for c in cols:
+            aggs.append(F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_nulls"))
+        res = df.agg(*aggs)
+        ratio_exprs = [(F.col(f"{c}_nulls") / F.lit(total)).alias(f"{c}_null_ratio") for c in cols]
+        return res.select(*res.columns, *ratio_exprs)
+
+    def require_non_null(self, df: DataFrame, required_cols: List[str]) -> Dict[str, DataFrame]:
+        """
+        Split dataframe into valid and rejected based on non-null required columns.
+        """
+        cond = None
+        for c in required_cols:
+            expr = F.col(c).isNotNull()
+            cond = expr if cond is None else (cond & expr)
+        valid = df.filter(cond)
+        rejected = df.filter(~cond)
+        return {"valid": valid, "rejected": rejected}
+
+    def filter_by_ranges(self, df: DataFrame, ranges: Dict[str, Tuple[float, float]], inclusive: bool = True) -> Dict[str, DataFrame]:
+        """
+        Split dataframe into valid and rejected by enforcing numeric ranges on one or more columns.
+        """
+        cond = None
+        for c, bounds in ranges.items():
+            lo, hi = bounds
+            cold = F.col(c).cast("double")
+            expr = cold.between(F.lit(lo), F.lit(hi)) if inclusive else ((cold > F.lit(lo)) & (cold < F.lit(hi)))
+            cond = expr if cond is None else (cond & expr)
+        valid = df.filter(cond) if cond is not None else df
+        rejected = df.filter(~cond) if cond is not None else df.limit(0)
+        return {"valid": valid, "rejected": rejected}
