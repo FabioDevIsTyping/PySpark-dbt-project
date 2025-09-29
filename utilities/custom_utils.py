@@ -37,5 +37,25 @@ class Transformations:
         df = df.withColumn("processed_timestamp", current_timestamp())
         return df
     
-    def upsert(self, df, keycols,table):
-        dlt_obj = DeltaTable.forName(f"table")
+
+        def upsert(self, df: DataFrame, key_cols: List[str], target_table: str, cdc: str) -> None:
+        """
+        Upsert df into target_table using key_cols as the match keys.
+        Only update matched rows if the source is as-new or newer on the CDC column.
+        Insert all non-matching rows.
+        """
+        spark = df.sparkSession
+
+        # Create table on first run
+        if not spark._jsparkSession.catalog().tableExists(target_table):
+            df.write.mode("overwrite").format("delta").saveAsTable(target_table)
+            return
+
+        tgt = DeltaTable.forName(spark, target_table)
+        on_expr = " AND ".join([f"t.{k} = s.{k}" for k in key_cols])
+
+        (tgt.alias("t")
+            .merge(df.alias("s"), on_expr)
+            .whenMatchedUpdateAll(condition=f"s.{cdc} >= t.{cdc}")   # update only if source is newer
+            .whenNotMatchedInsertAll()                               # insert new keys
+            .execute())
