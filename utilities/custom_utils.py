@@ -124,5 +124,5 @@ class Transformations:
         Sanitize strings by replacing pattern with replacement.
         """
         for c in cols:
-            df = df.withColumn(c, F.regexp_replace(F.col(c), pattern, replacemenent))
+            df = df.withColumn(c, F.regexp_replace(F.col(c), pattern, replacement))
         return df
