@@ -119,7 +119,7 @@ class Transformations:
         rejected = df.filter(~cond) if cond is not None else df.limit(0)
         return {"valid": valid, "rejected": rejected}
     
-    def sanitize_string(self, df:DataFrame, cols: List[str], pattern: str = r"[ \-]", replacemenent: str = "") -> DataFrame:
+    def sanitize_string(self, df:DataFrame, cols: List[str], pattern: str = r"[ \-]", replacement: str = "") -> DataFrame:
         """
         Sanitize strings by replacing pattern with replacement.
         """
